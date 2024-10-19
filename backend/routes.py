@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Response
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
@@ -24,12 +24,20 @@ def hash_password(password: str) -> str:
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     return bcrypt.checkpw(plain_password.encode('utf-8'), hashed_password.encode('utf-8'))
 
+@router.options("/users/")
+async def options_users(response: Response):
+    response.headers["Access-Control-Allow-Origin"] = "http://localhost:5173"
+    response.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+    return {}
 
+# Primary default route for API, can be used to test if API is up
 @router.get("/")
 async def read_root():
     return {"message": "Hello from FastAPI!"}
 
 
+# Create a new user
 @router.post("/users/", response_model=UserResponse)
 def create_user(user: UserCreate, db: Session = Depends(get_db)):
     try:
@@ -49,7 +57,7 @@ def create_user(user: UserCreate, db: Session = Depends(get_db)):
         db.rollback()
         raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
 
-
+# Log a user in
 @router.post("/login")
 def login(user_login: UserLogin, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.user_name == user_login.username).first()
@@ -61,37 +69,7 @@ def login(user_login: UserLogin, db: Session = Depends(get_db)):
         "roles": user.roles.split(',')
     }
 
-
-@router.post("/change-password")
-def change_password(request: ChangePasswordRequest, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.id == request.user_id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    if not verify_password(request.current_password, user.hashed_password):
-        raise HTTPException(status_code=400, detail="Current password is incorrect")
-
-    if user.last_passwords is None:
-        user.last_passwords = []
-
-    for last_password in user.last_passwords:
-        if verify_password(request.new_password, last_password):
-            raise HTTPException(status_code=400, detail="You cannot use any of your last 5 passwords.")
-
-    new_last_passwords = user.last_passwords + [user.hashed_password]
-    new_last_passwords = new_last_passwords[-5:]
-    user.hashed_password = hash_password(request.new_password)
-    user.last_passwords = new_last_passwords + [user.hashed_password]
-
-    db.query(User).filter(User.id == user.id).update(
-        {"last_passwords": user.last_passwords},
-        synchronize_session="fetch"
-    )
-    db.commit()
-
-    logging.info(f"Password changed successfully for user {user.id}")
-    return {"message": "Password changed successfully"}
-
-
+# Delete a user
 @router.delete("/users/{user_id}")
 def delete_user(user_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     check_admin(current_user)
@@ -104,7 +82,7 @@ def delete_user(user_id: int, current_user: User = Depends(get_current_user), db
     db.commit()
     return {"message": f"User {user_id} has been deleted successfully"}
 
-
+# Returns user information
 @router.put("/users/{user_id}", response_model=UserResponse)
 def edit_user(user_id: int, user_update: UserUpdate, current_user: User = Depends(get_current_user),
               db: Session = Depends(get_db)):
@@ -135,7 +113,84 @@ def edit_user(user_id: int, user_update: UserUpdate, current_user: User = Depend
     db_user.roles = db_user.roles.split(',') if db_user.roles else []
     return db_user
 
+# Change a password
+@router.post("/change-password")
+def change_password(request: ChangePasswordRequest, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.id == request.user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if not verify_password(request.current_password, user.hashed_password):
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
 
+    if user.last_passwords is None:
+        user.last_passwords = []
+
+    for last_password in user.last_passwords:
+        if verify_password(request.new_password, last_password):
+            raise HTTPException(status_code=400, detail="You cannot use any of your last 5 passwords.")
+
+    new_last_passwords = user.last_passwords + [user.hashed_password]
+    new_last_passwords = new_last_passwords[-5:]
+    user.hashed_password = hash_password(request.new_password)
+    user.last_passwords = new_last_passwords + [user.hashed_password]
+
+    db.query(User).filter(User.id == user.id).update(
+        {"last_passwords": user.last_passwords},
+        synchronize_session="fetch"
+    )
+    logging.info(f"Received change password request for user_id: {request.user_id}")
+    db.commit()
+
+    logging.info(f"Password changed successfully for user {user.id}")
+    return {"message": "Password changed successfully", "require_relogin": True}
+
+# Send a password recovery email to the user
+@router.post("/password-recovery")
+async def password_recovery(request: PasswordRecoveryRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    logging.info(f"Password recovery requested for email: {request.email}")
+    user = db.query(User).filter(User.email == request.email).first()
+    if not user:
+        logging.warning(f"Password recovery requested for non-existent email: {request.email}")
+        return {"message": "If the email exists, a recovery link will be sent."}
+
+    token = secrets.token_urlsafe(32)
+    logging.info(f"Generated token for user {user.id}: {token}")
+
+    user.reset_token = token
+    expiry_time = db.query(func.now() + text("INTERVAL 2 HOUR")).scalar()
+    user.reset_token_expiry = expiry_time
+    db.commit()
+
+    db.refresh(user)
+    logging.info(f"Token stored for user {user.id}. Stored token: {user.reset_token}")
+    logging.info(f"Token expiry time: {user.reset_token_expiry}")
+
+    try:
+        background_tasks.add_task(send_recovery_email, user.email, token)
+        logging.info(f"Recovery email task added for user {user.id}")
+        return {"message": "If the email exists, a recovery link will be sent."}
+    except Exception as e:
+        logging.error(f"Error sending recovery email: {str(e)}")
+        raise HTTPException(status_code=500, detail="An error occurred while sending the recovery email.")
+
+# Verifies if reset token is valid
+@router.get("/verify-reset-token")
+async def verify_reset_token(token: str, db: Session = Depends(get_db)):
+    logging.info(f"Received token for verification: {token}")
+    user = db.query(User).filter(User.reset_token == token).first()
+    if not user:
+        logging.warning(f"No user found with token: {token}")
+        raise HTTPException(status_code=400, detail="Invalid reset token")
+
+    current_time = db.query(func.now()).scalar()
+    if user.reset_token_expiry < current_time:
+        logging.warning(f"Token expired for user: {user.id}")
+        raise HTTPException(status_code=400, detail="Reset token has expired")
+
+    logging.info(f"Token valid for user: {user.id}")
+    return {"message": "Token is valid", "user_id": user.id, "email": user.email}
+
+# Reset a users password
 @router.post("/reset-password")
 async def reset_password(request: ResetPasswordRequest, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.reset_token == request.token).first()
@@ -170,42 +225,5 @@ async def reset_password(request: ResetPasswordRequest, db: Session = Depends(ge
     return {"message": "Password reset successfully"}
 
 
-@router.get("/verify-reset-token")
-async def verify_reset_token(token: str, db: Session = Depends(get_db)):
-    logging.info(f"Received token for verification: {token}")
-    user = db.query(User).filter(User.reset_token == token).first()
-    if not user:
-        logging.warning(f"No user found with token: {token}")
-        raise HTTPException(status_code=400, detail="Invalid reset token")
-
-    current_time = db.query(func.now()).scalar()
-    if user.reset_token_expiry < current_time:
-        logging.warning(f"Token expired for user: {user.id}")
-        raise HTTPException(status_code=400, detail="Reset token has expired")
-
-    logging.info(f"Token valid for user: {user.id}")
-    return {"message": "Token is valid", "user_id": user.id, "email": user.email}
 
 
-@router.post("/password-recovery")
-async def password_recovery(request: PasswordRecoveryRequest, background_tasks: BackgroundTasks,
-                            db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.email == request.email).first()
-    if not user:
-        logging.warning(f"Password recovery requested for non-existent email: {request.email}")
-        return {"message": "If the email exists, a recovery link will be sent."}
-
-    token = secrets.token_urlsafe(32)
-    logging.info(f"Generated token for user {user.id}: {token}")
-
-    user.reset_token = token
-    expiry_time = db.query(func.now() + text("INTERVAL 2 HOUR")).scalar()
-    user.reset_token_expiry = expiry_time
-    db.commit()
-
-    db.refresh(user)
-    logging.info(f"Token stored for user {user.id}. Stored token: {user.reset_token}")
-    logging.info(f"Token expiry time: {user.reset_token_expiry}")
-
-    background_tasks.add_task(send_recovery_email, user.email, token)
-    return {"message": "If the email exists, a recovery link will be sent."}

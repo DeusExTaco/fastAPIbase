@@ -1,6 +1,7 @@
 import React from 'react'
 import { useNavigate } from 'react-router-dom'
 import ChangePassword from '../components/ChangePassword'
+import { useAuth } from '../AuthContext'
 
 interface User {
   id: number;
@@ -10,19 +11,18 @@ interface User {
 
 interface AdminDashboardProps {
   user: User;
-  onLogout: () => void;
 }
 
-function AdminDashboard({ user, onLogout }: AdminDashboardProps) {
+function AdminDashboard({ user }: AdminDashboardProps) {
   const navigate = useNavigate()
+  const { logout } = useAuth()
 
   const handleLogout = () => {
-    onLogout()
+    logout()
     navigate('/login')
   }
 
   const handlePasswordChanged = () => {
-    // You can add any additional logic here if needed
     console.log('Password changed successfully');
   }
 
@@ -41,7 +41,10 @@ function AdminDashboard({ user, onLogout }: AdminDashboardProps) {
         <li>Configure System Settings</li>
       </ul>
 
-      <ChangePassword userId={user.id} onPasswordChanged={handlePasswordChanged} />
+      <ChangePassword
+        userId={user.id}
+        onPasswordChanged={handlePasswordChanged}
+      />
     </div>
   )
 }

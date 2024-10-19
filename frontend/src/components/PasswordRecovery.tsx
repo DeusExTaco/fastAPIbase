@@ -1,17 +1,17 @@
 import React, { useState } from 'react';
 
-interface PasswordRecoveryProps {
-  onBack: () => void;
-}
-
-function PasswordRecovery({ onBack }: PasswordRecoveryProps) {
+function PasswordRecovery() {
   const [email, setEmail] = useState('');
   const [message, setMessage] = useState('');
+  const [error, setError] = useState('');
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setMessage('');
+    setError('');
+
     try {
-      const response = await fetch('http://localhost:8000/password-recovery', {
+      const response = await fetch('http://localhost:8000/api/password-recovery', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -19,13 +19,16 @@ function PasswordRecovery({ onBack }: PasswordRecoveryProps) {
         body: JSON.stringify({ email }),
       });
 
+      const data = await response.json();
+
       if (response.ok) {
-        setMessage('If the email exists, a recovery link will be sent.');
+        setMessage(data.message);
       } else {
-        setMessage('An error occurred. Please try again.');
+        setError(data.detail || 'An error occurred. Please try again.');
       }
     } catch (error) {
-      setMessage('An error occurred. Please try again.');
+      console.error('Error:', error);
+      setError('An error occurred. Please try again.');
     }
   };
 
@@ -33,20 +36,17 @@ function PasswordRecovery({ onBack }: PasswordRecoveryProps) {
     <div>
       <h2>Password Recovery</h2>
       <form onSubmit={handleSubmit}>
-        <div>
-          <label htmlFor="email">Email:</label>
-          <input
-            type="email"
-            id="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            required
-          />
-        </div>
+        <input
+          type="email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          required
+          placeholder="Enter your email"
+        />
         <button type="submit">Send Recovery Email</button>
       </form>
-      {message && <p>{message}</p>}
-      <button onClick={onBack}>Back to Login</button>
+      {message && <p style={{ color: 'green' }}>{message}</p>}
+      {error && <p style={{ color: 'red' }}>{error}</p>}
     </div>
   );
 }

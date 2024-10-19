@@ -1,6 +1,7 @@
 import React from 'react'
 import { useNavigate } from 'react-router-dom'
 import ChangePassword from '../components/ChangePassword'
+import { useAuth } from '../AuthContext'
 
 interface User {
   id: number;
@@ -10,14 +11,14 @@ interface User {
 
 interface ModeratorDashboardProps {
   user: User;
-  onLogout: () => void;
 }
 
-function ModeratorDashboard({ user, onLogout }: ModeratorDashboardProps) {
-  const navigate = useNavigate()
+function ModeratorDashboard({ user }: ModeratorDashboardProps) {
+    const navigate = useNavigate()
+    const { logout } = useAuth()
 
   const handleLogout = () => {
-    onLogout()
+    logout()
     navigate('/login')
   }
 

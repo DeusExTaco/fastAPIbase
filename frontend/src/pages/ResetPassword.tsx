@@ -6,66 +6,37 @@ function ResetPassword() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [token, setToken] = useState('');
   const [message, setMessage] = useState('');
-  const [isLoading, setIsLoading] = useState(true);
-  const [isTokenValid, setIsTokenValid] = useState(false);
-  const [userEmail, setUserEmail] = useState('');
+  const [error, setError] = useState('');
   const navigate = useNavigate();
   const location = useLocation();
 
   useEffect(() => {
-    const verifyToken = async (token: string) => {
-      try {
-        const response = await fetch(`http://localhost:8000/verify-reset-token?token=${encodeURIComponent(token)}`, {
-          method: 'GET',
-        });
-
-        const data = await response.json();
-
-        if (response.ok) {
-          setIsTokenValid(true);
-          setUserEmail(data.email);
-          setMessage(''); // Clear any previous error messages
-        } else {
-          setMessage(data.detail || 'Invalid or expired token.');
-          setIsTokenValid(false);
-        }
-      } catch (error) {
-        console.error('Error verifying token:', error);
-        setMessage('An error occurred. Please try again.');
-        setIsTokenValid(false);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    (async () => {
-      const searchParams = new URLSearchParams(location.search);
-      const tokenFromUrl = searchParams.get('token');
-      if (tokenFromUrl) {
-        setToken(tokenFromUrl);
-        await verifyToken(tokenFromUrl);
-      } else {
-        setMessage('Invalid or missing reset token.');
-        setIsLoading(false);
-      }
-    })();
+    const searchParams = new URLSearchParams(location.search);
+    const tokenFromUrl = searchParams.get('token');
+    if (tokenFromUrl) {
+      setToken(tokenFromUrl);
+    } else {
+      setError('No reset token provided.');
+    }
   }, [location]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (newPassword !== confirmPassword) {
-      setMessage('Passwords do not match.');
-      return;
-    }
 
-    const passwordValidation = /^(?=.*[a-z])(?=.*[A-Z])(?=.*[0-9])(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{16,}$/;
-    if (!passwordValidation.test(newPassword)) {
-      setMessage('Password must be at least 16 characters long, contain at least one uppercase letter, one lowercase letter, one number, and one special character.');
+    // Reset error and message when the user submits
+    setError('');
+    setMessage('');
+
+    if (newPassword !== confirmPassword) {
+      setError("Passwords don't match");
+      // Clear the password fields when there's an error
+      setNewPassword('');
+      setConfirmPassword('');
       return;
     }
 
     try {
-      const response = await fetch('http://localhost:8000/reset-password', {
+      const response = await fetch('http://localhost:8000/api/reset-password', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -73,33 +44,29 @@ function ResetPassword() {
         body: JSON.stringify({ token, new_password: newPassword }),
       });
 
-      const data = await response.json();
-
       if (response.ok) {
         setMessage('Password reset successful. You can now login with your new password.');
         setTimeout(() => navigate('/login'), 3000);
       } else {
-        setMessage(data.detail || 'Failed to reset password. Please try again.');
+        const errorData = await response.json();
+        setError(errorData.detail || 'Failed to reset password. Please try again.');
+        // Clear the password fields if there's an error from the server
+        setNewPassword('');
+        setConfirmPassword('');
       }
     } catch (error) {
-      console.error('Error resetting password:', error);
-      setMessage('An error occurred. Please try again.');
+      setError('An error occurred. Please try again.');
+      // Clear the password fields if there's an error during fetch
+      setNewPassword('');
+      setConfirmPassword('');
     }
   };
-
-  if (isLoading) {
-    return <div>Verifying reset token...</div>;
-  }
-
-  if (!isTokenValid) {
-    return <div>{message}</div>;
-  }
 
   return (
     <div>
       <h2>Reset Password</h2>
-      <p>Resetting password for: {userEmail}</p>
-      {message && <p style={{ color: 'red' }}>{message}</p>}
+      {error && <p style={{ color: 'red' }}>{error}</p>} {/* Display error above the form */}
+      {message && <p style={{ color: 'green' }}>{message}</p>} {/* Display success message */}
       <form onSubmit={handleSubmit}>
         <div>
           <label htmlFor="newPassword">New Password:</label>

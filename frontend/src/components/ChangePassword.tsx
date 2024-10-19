@@ -1,23 +1,27 @@
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../AuthContext';
 
 interface ChangePasswordProps {
   userId: number;
-  onPasswordChanged: () => void;  // Call this to notify the parent component
+  onPasswordChanged: () => void;
 }
 
 const ChangePassword: React.FC<ChangePasswordProps> = ({ userId, onPasswordChanged }) => {
-  const [currentPassword, setCurrentPassword] = useState('');
-  const [newPassword, setNewPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
-  const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
+  const [currentPassword, setCurrentPassword] = useState<string>('');
+  const [newPassword, setNewPassword] = useState<string>('');
+  const [confirmPassword, setConfirmPassword] = useState<string>('');
+  const [error, setError] = useState<string>('');
+  const [success, setSuccess] = useState<string>('');
+  const navigate = useNavigate();
+  const { logout } = useAuth();
 
-  const validatePassword = (password: string) => {
+  const validatePassword = (password: string): boolean => {
     const passwordValidation = /^(?=.*[a-z])(?=.*[A-Z])(?=.*[0-9])(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{16,}$/;
     return passwordValidation.test(password);
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setError('');
     setSuccess('');
@@ -33,7 +37,8 @@ const ChangePassword: React.FC<ChangePasswordProps> = ({ userId, onPasswordChang
     }
 
     try {
-      const response = await fetch('http://localhost:8000/change-password', {
+      console.log('Sending request to change password with userId:', userId);
+      const response = await fetch('http://localhost:8000/api/change-password', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -46,15 +51,23 @@ const ChangePassword: React.FC<ChangePasswordProps> = ({ userId, onPasswordChang
       });
 
       if (response.ok) {
-        setSuccess('IN CHANGE PASSWORD.TSX -- Password changed successfully');
+        const data = await response.json();
+        setSuccess('Password changed successfully.');
         setCurrentPassword('');
         setNewPassword('');
         setConfirmPassword('');
-        onPasswordChanged(); // Notify the parent component
+        onPasswordChanged();
+
+        if (data.require_relogin) {
+          setSuccess((prev) => prev + ' You will be logged out.');
+          setTimeout(() => {
+            logout();
+            navigate('/login');
+          }, 2000);
+        }
       } else {
         const errorData = await response.json();
         setError(errorData.detail || 'Failed to change password');
-
       }
     } catch (error) {
       setError('An error occurred. Please try again.');
